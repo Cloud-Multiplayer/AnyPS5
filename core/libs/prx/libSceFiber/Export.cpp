@@ -12,6 +12,7 @@
 #include <string>
 #include <xmmintrin.h>
 
+#include "prx/libc/include/general/AsmMacros.hpp"
 #ifdef _WIN32
 #include <windows.h>
 #include "prx/libc/include/GuestArena.hpp"
@@ -200,43 +201,36 @@ static void UnpinStack(const void* context, std::uint64_t bytes) {
 extern "C" void Aps5FiberSwitchStack_nid_no_patch(void** save, void* load);
 extern "C" void Aps5FiberTrampoline_nid_no_patch();
 
-asm(R"(
-    .text
-    .globl Aps5FiberSwitchStack_nid_no_patch
-    .type Aps5FiberSwitchStack_nid_no_patch, @function
-Aps5FiberSwitchStack_nid_no_patch:
-    push %rbp
-    push %rbx
-    push %r12
-    push %r13
-    push %r14
-    push %r15
-    sub $8, %rsp
-    stmxcsr 0(%rsp)
-    fnstcw 4(%rsp)
-    mov %rsp, (%rdi)
-    mov %rsi, %rsp
-    ldmxcsr 0(%rsp)
-    fldcw 4(%rsp)
-    add $8, %rsp
-    pop %r15
-    pop %r14
-    pop %r13
-    pop %r12
-    pop %rbx
-    pop %rbp
-    ret
-    .size Aps5FiberSwitchStack_nid_no_patch, .-Aps5FiberSwitchStack_nid_no_patch
-
-    .globl Aps5FiberTrampoline_nid_no_patch
-    .type Aps5FiberTrampoline_nid_no_patch, @function
-Aps5FiberTrampoline_nid_no_patch:
-    mov %r12, %rdi
-    and $-16, %rsp
-    call Aps5FiberMain_nid_no_patch
-    ud2
-    .size Aps5FiberTrampoline_nid_no_patch, .-Aps5FiberTrampoline_nid_no_patch
-)");
+asm(".text\n"
+    APS5_ASM_FUNCTION("Aps5FiberSwitchStack_nid_no_patch")
+    "    push %rbp\n"
+    "    push %rbx\n"
+    "    push %r12\n"
+    "    push %r13\n"
+    "    push %r14\n"
+    "    push %r15\n"
+    "    sub $8, %rsp\n"
+    "    stmxcsr 0(%rsp)\n"
+    "    fnstcw 4(%rsp)\n"
+    "    mov %rsp, (%rdi)\n"
+    "    mov %rsi, %rsp\n"
+    "    ldmxcsr 0(%rsp)\n"
+    "    fldcw 4(%rsp)\n"
+    "    add $8, %rsp\n"
+    "    pop %r15\n"
+    "    pop %r14\n"
+    "    pop %r13\n"
+    "    pop %r12\n"
+    "    pop %rbx\n"
+    "    pop %rbp\n"
+    "    ret\n"
+    APS5_ASM_END_FUNCTION("Aps5FiberSwitchStack_nid_no_patch")
+    APS5_ASM_FUNCTION("Aps5FiberTrampoline_nid_no_patch")
+    "    mov %r12, %rdi\n"
+    "    and $-16, %rsp\n"
+    "    call " APS5_ASM_SYMBOL("Aps5FiberMain_nid_no_patch") "\n"
+    "    ud2\n"
+    APS5_ASM_END_FUNCTION("Aps5FiberTrampoline_nid_no_patch"));
 
 struct InitialFrame {
     std::uint32_t mxcsr;

@@ -1,3 +1,4 @@
+#include "prx/libc/include/general/ProcPaths.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
@@ -17,7 +18,7 @@
 #include <system_error>
 #include <vector>
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <unistd.h>
@@ -140,12 +141,12 @@ namespace {
 
 constexpr int GuestMapFixedFlag = 0x10;
 
-#if defined(__linux__)
+#if (defined(__linux__) || defined(__APPLE__))
 void* MapAtOrAbove(std::uintptr_t start, size_t len, int prot, size_t alignment) {
     constexpr std::uintptr_t UserLimit = 0x7fff00000000ull;
     for (int attempt = 0; attempt < 8; ++attempt) {
         std::vector<std::pair<std::uintptr_t, std::uintptr_t>> used;
-        std::ifstream maps("/proc/self/maps");
+        std::ifstream maps(APS5_PROC_SELF_MAPS);
         std::string line;
         while (std::getline(maps, line)) {
             std::istringstream fields(line);
@@ -251,7 +252,7 @@ public:
 
     int MemoryType() const { return memoryType; }
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
     int File() const { return file; }
 #endif
 
@@ -344,7 +345,7 @@ void ValidatePhysicalRange(std::uint64_t phys, std::size_t len) {
     }
 }
 
-#if defined(__linux__)
+#if (defined(__linux__) || defined(__APPLE__))
 void WatchMapping(std::uintptr_t address, std::size_t len) {
     GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(reinterpret_cast<const void*>(address), len);
     const auto end = address + len;
@@ -363,7 +364,7 @@ void WatchMapping(std::uintptr_t address, std::size_t len) {
 }
 #endif
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
 bool SharedBacking(std::uintptr_t address, std::size_t bytes, int* file, std::uint64_t* offset) {
     std::lock_guard lock(g_directLock);
     const auto next = g_directMappings.upper_bound(address);
@@ -404,7 +405,7 @@ void AddMapping(std::uintptr_t address, std::size_t len, std::uint64_t phys, int
         g_directMappings.emplace(address + offset, DirectMapping{address + offset + bytes, phys + offset, page.backing->MemoryType(), page.backing});
         offset += bytes;
     }
-#if defined(__linux__)
+#if (defined(__linux__) || defined(__APPLE__))
     WatchMapping(address, len);
 #endif
 }
@@ -436,7 +437,7 @@ bool RemapFixedIntoRegistered(GuestAllocations::Mutation& mutation, void* addr, 
 }
 
 void Unmap(void* addr, size_t len) {
-#if defined(__linux__)
+#if (defined(__linux__) || defined(__APPLE__))
     if (munmap(addr, len) != 0) throw std::system_error(errno, std::generic_category(), "munmap failed");
     GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(addr, len);
 #else
@@ -485,7 +486,7 @@ void* MapPlaced(void* addr, size_t len, int prot, int flags, size_t alignment) {
             }
         }
 #endif
-#if defined(__linux__)
+#if (defined(__linux__) || defined(__APPLE__))
         const int placement = (flags & GuestMapNoOverwrite) != 0 ? MAP_FIXED_NOREPLACE : MAP_FIXED;
 #else
         const int placement = MAP_FIXED;
@@ -498,7 +499,7 @@ void* MapPlaced(void* addr, size_t len, int prot, int flags, size_t alignment) {
         return result;
     }
     if (addr) {
-#if defined(__linux__)
+#if (defined(__linux__) || defined(__APPLE__))
         return MapAtOrAbove(reinterpret_cast<std::uintptr_t>(addr), len, prot, alignment);
 #else
         return mmap_aligned(len, prot, alignment, reinterpret_cast<std::uintptr_t>(addr));
@@ -586,7 +587,7 @@ void RecordProtection(const void* addr, size_t len, int prot) {
 
 void* MapAligned(void* addr, size_t len, int prot, int flags, size_t alignment) {
     void* mapped = MapPlaced(addr, len, prot, flags, alignment);
-#if defined(__linux__)
+#if (defined(__linux__) || defined(__APPLE__))
     GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(mapped, len);
 #endif
     return mapped;
@@ -620,7 +621,7 @@ void UnmapRegistered(GuestAllocations::Mutation& mutation, void* addr, size_t le
         auto* pieceAddress = const_cast<void*>(piece);
         std::lock_guard lock(g_directLock);
         EraseMappings(reinterpret_cast<std::uintptr_t>(piece), reinterpret_cast<std::uintptr_t>(piece) + pieceBytes);
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
         Unmap(pieceAddress, pieceBytes);
 #else
         if (KernelArena::Get().Contains(pieceAddress, pieceBytes)) munmap(pieceAddress, pieceBytes);
@@ -801,7 +802,7 @@ void CreateDirectMemoryBacking(int64_t start, size_t len, int memoryType) {
     for (std::size_t offset = 0; offset < len; offset += PS5_PAGE_SIZE) {
         if (g_physPages.contains(first + offset)) throw std::runtime_error("physical allocation overlaps live direct memory");
     }
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
     static std::once_flag registered;
     std::call_once(registered, [] { GuestArena::GuestArenaSetSharedBacking_nid_postfix(&SharedBacking); });
 #endif

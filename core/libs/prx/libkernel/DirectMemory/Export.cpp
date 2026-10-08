@@ -1,3 +1,4 @@
+#include "prx/libc/include/general/ProcPaths.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -280,7 +281,7 @@ int APS5_VABI sceKernelVirtualQuery(const void* addr, int flags, VirtualQueryInf
  const bool writable = (host.Protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_WRITECOPY)) != 0;
  const bool executable = (host.Protect & (PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)) != 0;
  #else
- std::ifstream maps("/proc/self/maps");
+ std::ifstream maps(APS5_PROC_SELF_MAPS);
  std::string line;
  bool found = false, writable = false, executable = false;
  while (std::getline(maps, line)) {

@@ -86,6 +86,11 @@ struct SpirvEmitterState {
     std::uint32_t hostSubgroupSize = 0;
     bool splitSubgroup = false;
     bool narrowSubgroupClock = false;
+    // The program is emitted for a wave of one lane: lane id 0, a ballot is the lane's own predicate in bit
+    // 0, and "any lane" is the lane itself. Exact when no value moves between lanes, because each host
+    // invocation of a vertex shader computes one lane and a lane the wave mask excludes skips the work the
+    // mask would have discarded.
+    bool singleLane = false;
     std::unordered_set<const IrValue*> sharedLaneValues;
     std::uint32_t laneHalf = 0;
     // The target's SPIR-V version and what the device accepts, for capabilities an emitter adds

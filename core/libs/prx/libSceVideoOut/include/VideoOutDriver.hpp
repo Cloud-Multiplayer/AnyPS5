@@ -12,6 +12,8 @@
 #include <vector>
 #include <atomic>
 #include <exception>
+#include <future>
+#include <stop_token>
 #include <memory>
 #include <stdexcept>
 #include "prx/libSceAgcDriver/Execution/include/VideoOutput.hpp"
@@ -217,6 +219,12 @@ private:
     DisplayWindow window;
 
     std::jthread presentThread;
+#if defined(__APPLE__)
+    // The presentation loop owns the window, so on macOS it runs on the process main thread instead of
+    // presentThread.
+    std::stop_source mainPresentStop;
+    std::future<void> mainPresentDone;
+#endif
     std::jthread vblankThread;
 };
 

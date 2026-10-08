@@ -1,4 +1,5 @@
 #include "Translation/InstructionTranslator.hpp"
+#include "Translation/FixedFunctionInterpolation.hpp"
 #include "Recompiler.hpp"
 #include "Translation/DispatchInstructions.hpp"
 #include "Translation/TranslationContext.hpp"
@@ -395,6 +396,9 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
         }
     }
 
+    if (options.stage == ShaderStageKind::Pixel && !options.fragmentShaderBarycentricEnabled) {
+        ValidateFixedFunctionInterpolation(decoded, cfg, *options.inputInfo.pixel);
+    }
     IrProgram program;
     program.SetWaveSize(options.waveSize);
     program.Resources().stage = toIrShaderStage(options.stage);

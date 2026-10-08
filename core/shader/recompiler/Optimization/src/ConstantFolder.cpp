@@ -97,6 +97,38 @@ bool replaceBinaryIdentity(IrValue& inst, IrType type, std::uint64_t identity) {
     return false;
 }
 
+// Prove a masked constant shift independent of its dynamic selector. The
+// selector must be explicitly bounded to 0..31, so no undefined shift or
+// host subgroup ordering is assumed. This also removes dead LaneId inputs
+// from exports whose execution mask is fully set.
+bool foldMaskedConstantShift(IrBuilder& builder, IrValue& inst) {
+    for (std::size_t side = 0; side != 2; ++side) {
+        auto& shifted = resolveArg(inst, side);
+        auto& mask = resolveArg(inst, 1u - side);
+        if (shifted.Opcode() != IrOpcode::ShiftRightLogical32 || !isImmediate(mask, IrType::U32)) continue;
+        auto& source = resolveArg(shifted, 0);
+        auto& selector = resolveArg(shifted, 1);
+        if (!isImmediate(source, IrType::U32) || selector.Opcode() != IrOpcode::BitwiseAnd32) continue;
+        const auto& left = resolveArg(selector, 0);
+        const auto& right = resolveArg(selector, 1);
+        const auto* bound = isImmediate(left, IrType::U32) ? &left : isImmediate(right, IrType::U32) ? &right : nullptr;
+        if (bound == nullptr || bound->ImmediateU32() > 31u) continue;
+        const auto expected = source.ImmediateU32() & mask.ImmediateU32();
+        bool invariant = true;
+        for (std::uint32_t shift = 1; shift <= bound->ImmediateU32(); ++shift) {
+            if (((source.ImmediateU32() >> shift) & mask.ImmediateU32()) != expected) {
+                invariant = false;
+                break;
+            }
+        }
+        if (invariant) {
+            replaceWith(inst, builder.Constant(expected));
+            return true;
+        }
+    }
+    return false;
+}
+
 bool foldSelect(IrValue& inst) {
     auto& condition = resolveArg(inst, 0);
     auto& trueValue = resolveArg(inst, 1);
@@ -494,6 +526,7 @@ bool ConstantFolder::tryFoldValue(IrProgram& program, IrValue& value) const {
             if (foldU32(builder, value, [](std::uint32_t a, std::uint32_t b) { return a & b; })) {
                 return true;
             }
+            if (foldMaskedConstantShift(builder, value)) return true;
             return replaceBinaryIdentity(value, IrType::U32, 0xffffffffu);
         }
         case IrOpcode::BitwiseAnd64: {

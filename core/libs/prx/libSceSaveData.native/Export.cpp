@@ -140,7 +140,12 @@ SaveDataParam load_param(const std::string& real_path) {
         std::error_code ec;
         const auto written = std::filesystem::last_write_time(real_path, ec);
         if (!ec) {
+#if defined(__APPLE__)
+            // libc++ has no clock_cast.
+            const auto system = std::chrono::file_clock::to_sys(written);
+#else
             const auto system = std::chrono::clock_cast<std::chrono::system_clock>(written);
+#endif
             param.mtime = std::chrono::duration_cast<std::chrono::seconds>(system.time_since_epoch()).count();
         }
     }

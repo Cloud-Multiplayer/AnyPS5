@@ -4,6 +4,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/gcc/StackGuard.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/windows/CrashReport.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/linux/DlIteratePhdr.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/macos/MacCompat.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/macos/GuestImages.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Strings.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AllocatingStrings.cpp
@@ -34,8 +35,8 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Filesystem.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Errors.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/CxxAbiSupport.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/exception/Exports.cpp
 )
+target_sources(libc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/exception/Exports.cpp)
 
 target_include_directories(libc PRIVATE
         ${LIBS_INCLUDE_DIR}

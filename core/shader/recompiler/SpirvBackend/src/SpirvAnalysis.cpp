@@ -1,4 +1,6 @@
 #include "SpirvBackend/SpirvAnalysis.hpp"
+#include <cstdio>
+#include <cstdlib>
 #include <algorithm>
 #include <optional>
 #include <stdexcept>
@@ -374,6 +376,24 @@ SpirvRequirements AnalyzeProgramRequirements(const IrProgram& program) {
                     requirements.subgroupLocalInvocationId = true;
                 }
             }
+            if (std::getenv("APS5_TRACE_SUBGROUP") != nullptr && program.Resources().stage == IrShaderStage::Vertex) {
+                const char* name = nullptr;
+                switch (inst->Opcode()) {
+                case IrOpcode::Ballot: name = "Ballot"; break;
+                case IrOpcode::DppMoveU32: name = "DppMoveU32"; break;
+                case IrOpcode::ReadFirstLane: name = "ReadFirstLane"; break;
+                case IrOpcode::ReadLane: name = "ReadLane"; break;
+                case IrOpcode::DppUpdateU32: name = "DppUpdateU32"; break;
+                case IrOpcode::WriteLane: name = "WriteLane"; break;
+                case IrOpcode::Permlane16U32: name = "Permlane16U32"; break;
+                case IrOpcode::SwizzleU32: name = "SwizzleU32"; break;
+                case IrOpcode::PermuteU32: name = "PermuteU32"; break;
+                case IrOpcode::BpermuteU32: name = "BpermuteU32"; break;
+                case IrOpcode::LaneId: name = "LaneId"; break;
+                default: break;
+                }
+                if (name != nullptr) std::fprintf(stderr, "[subgroup] vertex shader needs subgroup support for %s\n", name);
+            }
             switch (inst->Opcode()) {
             case IrOpcode::Ballot:
                 requirements.subgroupBallot = true;
@@ -434,6 +454,7 @@ SpirvRequirements AnalyzeProgramRequirements(const IrProgram& program) {
     }
     for (const auto& info : program.Metadata().blockInfo) {
         if (info.terminator.kind == TerminatorKind::ConditionalBranch && IsWaveMaskBranch(info.terminator.condition)) {
+            if (std::getenv("APS5_TRACE_SUBGROUP") != nullptr && program.Resources().stage == IrShaderStage::Vertex) std::fprintf(stderr, "[subgroup] vertex shader needs subgroup support for a wave-mask branch\n");
             requirements.subgroupBallot = true;
         }
     }

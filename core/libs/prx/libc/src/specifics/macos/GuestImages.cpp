@@ -1,6 +1,7 @@
 #ifdef __APPLE__
 
 #include "prx/libc/include/specifics/linux/ElfTypes.hpp"
+#include <dlfcn.h>
 #include <mach-o/dyld.h>
 #include <mach-o/getsect.h>
 #include <mach-o/loader.h>
@@ -16,6 +17,12 @@ constexpr std::size_t HeadersOffset = 0x60;
 }
 
 extern "C" int dl_iterate_phdr(int (*callback)(dl_phdr_info*, std::size_t, void*), void* data) {
+    // core/macos/loader maps relinker ELF output itself; those modules are not Mach-O images and carry no
+    // __APS5DATA,__meta section, so the loader reports them.
+    using LoaderIterate = int (*)(int (*)(dl_phdr_info*, std::size_t, void*), void*);
+    static const auto loaderIterate = reinterpret_cast<LoaderIterate>(dlsym(RTLD_MAIN_ONLY, "Aps5LoaderIteratePhdr"));
+    if (loaderIterate != nullptr)
+        if (const int result = loaderIterate(callback, data); result != 0) return result;
     for (std::uint32_t index = 0; index < _dyld_image_count(); ++index) {
         const auto* header = reinterpret_cast<const mach_header_64*>(_dyld_get_image_header(index));
         if (header == nullptr || header->magic != MH_MAGIC_64 || (header->flags & MH_DYLIB_IN_CACHE) != 0) continue;

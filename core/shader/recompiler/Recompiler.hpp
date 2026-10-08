@@ -201,6 +201,9 @@ struct SpirvTarget {
     bool nonConstantImageOffsets = false;
     std::uint32_t srgbDecodeFormats = 0;
     bool narrowSubgroupClock = false;
+    // The device runs subgroup operations in vertex shaders. Without it (Metal), a vertex program that only
+    // takes ballots, reads its lane id and branches on the wave mask is emitted for a wave of one lane.
+    bool vertexSubgroups = true;
 };
 
 struct BindingLayout {

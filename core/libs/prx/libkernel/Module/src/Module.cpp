@@ -1,3 +1,4 @@
+#include "prx/libc/include/general/ProcPaths.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -157,7 +158,7 @@ int APS5_VABI sceKernelGetModuleInfoForUnwind(uint64_t addr, int flags, ModuleIn
   info->seg0_size = textSize;
   return 0;
 #else
-  std::ifstream maps("/proc/self/maps");
+  std::ifstream maps(APS5_PROC_SELF_MAPS);
   if (!maps) throw std::runtime_error("sceKernelGetModuleInfoForUnwind: failed to open /proc/self/maps");
   std::string line;
   while (std::getline(maps, line)) {

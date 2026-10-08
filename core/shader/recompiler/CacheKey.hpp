@@ -205,6 +205,7 @@ private:
         append(key, value.nonConstantImageOffsets);
         append(key, value.srgbDecodeFormats);
         append(key, value.narrowSubgroupClock);
+        append(key, value.vertexSubgroups);
     }
 };
 

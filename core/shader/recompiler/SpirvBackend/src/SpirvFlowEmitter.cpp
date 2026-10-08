@@ -130,6 +130,7 @@ bool IsContinueTarget(const IrProgram& program, std::uint32_t block) {
 }
 
 std::uint32_t EmitWaveAny(SpirvEmitterState& state, std::uint32_t predicate) {
+    if (state.singleLane) return predicate;
     const auto ballot = state.module.AllocateId();
     state.module.AddFunction(spv::OpGroupNonUniformBallot, TypeU32Vector(state, 4u), ballot, ConstantU32(state, spv::ScopeSubgroup), predicate);
     const auto wave = EmitWaveBallot(state, ballot);

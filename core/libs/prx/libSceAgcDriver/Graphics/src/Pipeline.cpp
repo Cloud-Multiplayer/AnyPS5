@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <list>
 #include <mutex>
 #include <type_traits>
@@ -82,6 +83,15 @@ void ValidateDepthBounds(const Context& context, const State& state) {
     Require(!state.depthBoundsTest || context.depthRangeUnrestricted || (state.minDepthBounds >= 0.0f && state.minDepthBounds <= 1.0f && state.maxDepthBounds >= 0.0f && state.maxDepthBounds <= 1.0f), "depth bounds outside [0, 1] require VK_EXT_depth_range_unrestricted");
 }
 
+VkViewport HostViewport(const Context& context, const State& state) {
+    auto viewport = state.viewport;
+    if (context.depthRangeUnrestricted || state.depthTest || state.depthWrite) return viewport;
+    if (!std::isfinite(viewport.minDepth) || !std::isfinite(viewport.maxDepth)) return viewport;
+    viewport.minDepth = std::clamp(viewport.minDepth, 0.0f, 1.0f);
+    viewport.maxDepth = std::clamp(viewport.maxDepth, 0.0f, 1.0f);
+    return viewport;
+}
+
 void ValidateViewport(const Context& context, const VkViewport& viewport) {
     Require(std::isfinite(viewport.minDepth) && std::isfinite(viewport.maxDepth), "non-finite viewport depth range");
     Require(context.depthRangeUnrestricted || (viewport.minDepth >= 0 && viewport.minDepth <= 1 && viewport.maxDepth >= 0 && viewport.maxDepth <= 1), "viewport depth outside [0, 1] requires VK_EXT_depth_range_unrestricted");
@@ -100,7 +110,10 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
     Require(state.hasColorTarget || (context.limits.framebufferNoAttachmentsSampleCounts & VK_SAMPLE_COUNT_1_BIT) != 0, "device does not support single-sample rendering without attachments");
     Require(!depthBounds || context.depthBounds, "device does not support the depth bounds test");
     Require(!depthBias || state.depthBiasClamp == 0.0f || context.depthBiasClamp, "device does not support depth bias clamping");
-    Require(!state.negativeOneToOne || context.depthClipControl, "negative-one-to-one depth clipping requires VK_EXT_depth_clip_control with depthClipControl enabled");
+    // MoltenVK builds without VK_EXT_depth_clip_control: APS5_APPROX_DEPTH_CLIP=1 keeps the zero-to-one
+    // clip volume, so geometry with negative clip-space z is clipped. Enough for flat 2D titles only.
+    static const bool approximateDepthClip = [] { const char* value = std::getenv("APS5_APPROX_DEPTH_CLIP"); return value != nullptr && std::strcmp(value, "1") == 0; }();
+    Require(!state.negativeOneToOne || context.depthClipControl || approximateDepthClip, "negative-one-to-one depth clipping requires VK_EXT_depth_clip_control with depthClipControl enabled");
     Require(state.conservativeRasterization == VK_CONSERVATIVE_RASTERIZATION_MODE_DISABLED_EXT || context.conservativeRasterization, "conservative rasterization requires VK_EXT_conservative_rasterization with at most 1/256 pixel of overestimation and degenerate triangles rasterized");
     if (state.rectList) Require(context.tessellationShader && context.limits.maxTessellationPatchSize >= 4, "rect-list requires tessellation with four output control points");
     if (state.stages.tessellation) {
@@ -193,7 +206,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         VkPipelineViewportStateCreateInfo viewports{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
         VkPipelineViewportDepthClipControlCreateInfoEXT depthClip{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_DEPTH_CLIP_CONTROL_CREATE_INFO_EXT};
         depthClip.negativeOneToOne = state.negativeOneToOne;
-        if (state.negativeOneToOne) viewports.pNext = &depthClip;
+        if (state.negativeOneToOne && context.depthClipControl) viewports.pNext = &depthClip;
         viewports.viewportCount = 1;
         viewports.scissorCount = 1;
         std::vector<VkDynamicState> dynamicStates{VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
@@ -337,7 +350,8 @@ void Pipeline::Begin(VkCommandBuffer commands, const Framebuffer& framebuffer, V
 
 void Pipeline::Continue(VkCommandBuffer commands, const State& state) const {
     context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-    context.Resolved(&DeviceFunctions::cmdSetViewport, "vkCmdSetViewport")(commands, 0, 1, &state.viewport);
+    const auto hostViewport = HostViewport(context, state);
+    context.Resolved(&DeviceFunctions::cmdSetViewport, "vkCmdSetViewport")(commands, 0, 1, &hostViewport);
     context.Resolved(&DeviceFunctions::cmdSetScissor, "vkCmdSetScissor")(commands, 0, 1, &state.scissor);
     if (depthBias) context.Resolved(&DeviceFunctions::cmdSetDepthBias, "vkCmdSetDepthBias")(commands, state.depthBiasConstant, state.depthBiasClamp, state.depthBiasSlope);
     if (!depthBounds) return;

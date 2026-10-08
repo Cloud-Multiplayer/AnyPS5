@@ -85,6 +85,10 @@ std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& st
 void ClearCachedPipelines(VkDevice device);
 // Device limit checks of the viewport, which is dynamic state and so no longer checked by Pipeline.
 void ValidateViewport(const Context& context, const VkViewport& viewport);
+// The viewport handed to the device. Without VK_EXT_depth_range_unrestricted (MoltenVK) a depth range outside
+// [0, 1] is clamped when the draw neither tests nor writes depth: the range then reaches nothing but
+// gl_FragCoord.z, which is the accepted difference. A draw that uses depth keeps its range and is rejected.
+VkViewport HostViewport(const Context& context, const State& state);
 void ValidateDepthBounds(const Context& context, const State& state);
 
 void ValidateShaderPair(const ShaderRecompiler::RecompileResult& vertex, const ShaderRecompiler::RecompileResult& fragment);

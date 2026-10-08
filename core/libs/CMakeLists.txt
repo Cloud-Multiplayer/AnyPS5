@@ -40,6 +40,20 @@ if(MINGW)
     endforeach()
 endif()
 
+if(APPLE)
+    set(APS5_ORIGIN_RPATH "@loader_path")
+else()
+    set(APS5_ORIGIN_RPATH "$ORIGIN")
+endif()
+
+if(APPLE)
+    # Guest modules stay ELF and are mapped by core/macos/loader, which also provides dl_iterate_phdr and
+    # dladdr1 at run time; MacCompat.hpp supplies the glibc/libstdc++ declarations the POSIX paths use.
+    include_directories(BEFORE ${CMAKE_CURRENT_SOURCE_DIR}/prx/libc/include/specifics/macos/shim)
+    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-include${CMAKE_CURRENT_SOURCE_DIR}/prx/libc/include/specifics/macos/MacCompat.hpp>)
+    add_link_options(-undefined dynamic_lookup)
+endif()
+
 set(LIBC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/prx/libc)
 add_library(libc SHARED EXCLUDE_FROM_ALL)
 set(LIBS_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
@@ -58,7 +72,7 @@ set_target_properties(libc PROPERTIES
         LIBRARY_OUTPUT_DIRECTORY ${UNPATCHED_DIR}
         ARCHIVE_OUTPUT_DIRECTORY ${IMPLIB_DIR}
         BUILD_WITH_INSTALL_RPATH ON
-        INSTALL_RPATH "$ORIGIN"
+        INSTALL_RPATH "${APS5_ORIGIN_RPATH}"
 )
 
 set(LIBC_UNPATCHED ${UNPATCHED_DIR}/libc.prx)
@@ -110,7 +124,7 @@ foreach(LIB_DIR ${LIBS_DIRS})
                 LIBRARY_OUTPUT_DIRECTORY ${UNPATCHED_DIR}
                 ARCHIVE_OUTPUT_DIRECTORY ${IMPLIB_DIR}
                 BUILD_WITH_INSTALL_RPATH ON
-                INSTALL_RPATH "$ORIGIN"
+                INSTALL_RPATH "${APS5_ORIGIN_RPATH}"
         )
 
         set(UNPATCHED_FILE ${UNPATCHED_DIR}/${LIB_NAME}.prx)

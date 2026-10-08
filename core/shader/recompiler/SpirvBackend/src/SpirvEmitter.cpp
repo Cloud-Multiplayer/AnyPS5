@@ -117,6 +117,7 @@ std::uint32_t SpirvValueEmitContext::HalfArg(const IrValue& inst, std::size_t in
 std::uint32_t SpirvValueEmitContext::Ballot(const IrValue* predicate) {
     const auto ballotType = TypeU32Vector(state, 4u);
     const auto scope = ConstantU32(state, spv::ScopeSubgroup);
+    if (state.singleLane) return EmitSingleLaneBallot(state, Def(predicate));
     const auto low = state.module.AllocateId();
     state.module.AddFunction(spv::OpGroupNonUniformBallot, ballotType, low, scope, otherHalf == nullptr || half == 0u ? Def(predicate) : otherHalf->Def(predicate));
     if (otherHalf == nullptr) {
@@ -254,6 +255,13 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     if (state.splitSubgroup && (state.requirements.subgroupBallot || state.requirements.subgroupShuffle)) state.requirements.subgroupLocalInvocationId = true;
     const auto* workgroup = ShaderWorkgroupInputFor(state);
     state.laneCount = workgroup != nullptr && program.WaveSize() == 64u && workgroup->hostSubgroupSize == 32u ? 2u : 1u;
+    if (!target.vertexSubgroups && program.Resources().stage == IrShaderStage::Vertex && state.laneCount == 1u && !state.requirements.subgroupShuffle &&
+        (state.requirements.subgroupBallot || state.requirements.subgroupLocalInvocationId)) {
+        state.singleLane = true;
+        state.splitSubgroup = false;
+        state.requirements.subgroupBallot = false;
+        state.requirements.subgroupLocalInvocationId = false;
+    }
     if (state.laneCount == 2u) state.sharedLaneValues = WaveUniformValues(program);
     if (program.Resources().stage == IrShaderStage::Compute && workgroup != nullptr) {
         // The key comes from a subgroup ballot (ReadFirstLane), so the slot is uniform over the

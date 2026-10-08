@@ -26,6 +26,14 @@
 #ifdef _WIN32
 #include <windows.h>
 #endif
+#ifdef APS5_SLIM
+#ifndef _WIN32
+#include <dlfcn.h>
+#endif
+#else
+#include <SDL_loadso.h>
+#include <SDL_error.h>
+#endif
 #include <atomic>
 #include <chrono>
 #include <charconv>
@@ -34,8 +42,6 @@
 #include <cctype>
 #include <cstdlib>
 #include <mutex>
-#include <SDL_loadso.h>
-#include <SDL_error.h>
 #include <spirv/unified1/spirv.hpp>
 #include <array>
 #include <optional>
@@ -569,23 +575,55 @@ struct VulkanDevice::State {
             reinterpret_cast<PFN_vkDestroyInstance>(instanceProc(instance, "vkDestroyInstance"))(instance, nullptr);
         }
         if (library != nullptr) {
+#ifdef APS5_SLIM
+#ifdef _WIN32
+            FreeLibrary(static_cast<HMODULE>(library));
+#else
+            dlclose(library);
+#endif
+#else
             SDL_UnloadObject(library);
+#endif
         }
     }
 };
 
 VulkanDevice::VulkanDevice(const PresentationWindow* window) : state(std::make_unique<State>()), serial([] { static std::atomic<std::uint64_t> serials{0}; return serials.fetch_add(1, std::memory_order_relaxed) + 1; }()) {
     APS5_LOG_OUT("VulkanDevice constructor window=%p", static_cast<const void*>(window));
+#ifdef APS5_SLIM
+#ifdef _WIN32
+    state->library = LoadLibraryA("vulkan-1.dll");
+#else
+#if defined(__APPLE__)
+    state->library = dlopen(Aps5MacVulkanLibrary(), RTLD_NOW);
+#else
+    state->library = dlopen("libvulkan.so.1", RTLD_NOW);
+#endif
+#endif
+    if (state->library == nullptr) {
+        throw std::runtime_error("Vulkan loader: failed to open the ICD library");
+    }
+#ifdef _WIN32
+    state->instanceProc = reinterpret_cast<PFN_vkGetInstanceProcAddr>(GetProcAddress(static_cast<HMODULE>(state->library), "vkGetInstanceProcAddr"));
+#else
+    state->instanceProc = reinterpret_cast<PFN_vkGetInstanceProcAddr>(dlsym(state->library, "vkGetInstanceProcAddr"));
+#endif
+#else
 #ifdef _WIN32
     state->library = SDL_LoadObject("vulkan-1.dll");
 #else
+#if defined(__APPLE__)
+    state->library = SDL_LoadObject(Aps5MacVulkanLibrary());
+#else
     state->library = SDL_LoadObject("libvulkan.so.1");
+#endif
 #endif
     if (state->library == nullptr) {
         throw std::runtime_error(std::string("Vulkan loader: ") + SDL_GetError());
     }
-    APS5_LOG_OUT("Vulkan loader loaded library=%p", state->library);
     state->instanceProc = reinterpret_cast<PFN_vkGetInstanceProcAddr>(SDL_LoadFunction(state->library, "vkGetInstanceProcAddr"));
+#endif
+    APS5_LOG_OUT("Vulkan loader loaded library=%p", state->library);
     if (state->instanceProc == nullptr) {
         throw std::runtime_error("Vulkan loader: vkGetInstanceProcAddr missing");
     }
@@ -616,6 +654,23 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window) : state(std::make_u
         }
         create.enabledExtensionCount = static_cast<std::uint32_t>(instanceExtensions.size());
         create.ppEnabledExtensionNames = instanceExtensions.data();
+    }
+    // MoltenVK devices are hidden unless the instance asks for portability
+    // enumeration, and vkCreateDevice fails unless VK_KHR_portability_subset
+    // is enabled on those devices. Full ICDs do not advertise the extension.
+    {
+        std::uint32_t availableCount = 0;
+        const auto enumerateExtensions = state->InstanceFunction<PFN_vkEnumerateInstanceExtensionProperties>("vkEnumerateInstanceExtensionProperties");
+        check(enumerateExtensions(nullptr, &availableCount, nullptr), "vkEnumerateInstanceExtensionProperties");
+        std::vector<VkExtensionProperties> available(availableCount);
+        if (availableCount != 0) check(enumerateExtensions(nullptr, &availableCount, available.data()), "vkEnumerateInstanceExtensionProperties");
+        const bool portability = std::any_of(available.begin(), available.end(), [](const auto& item) { return std::strcmp(item.extensionName, VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME) == 0; });
+        if (portability) {
+            instanceExtensions.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+            create.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+            create.enabledExtensionCount = static_cast<std::uint32_t>(instanceExtensions.size());
+            create.ppEnabledExtensionNames = instanceExtensions.data();
+        }
     }
     check(state->InstanceFunction<PFN_vkCreateInstance>("vkCreateInstance")(&create, nullptr, &state->instance), "vkCreateInstance");
     APS5_LOG_OUT("Vulkan instance created instance=%p", reinterpret_cast<void*>(state->instance));
@@ -756,6 +811,10 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window) : state(std::make_u
         VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &barycentricFeatures};
         state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(selected, &features);
         state->fragmentShaderBarycentric = barycentricFeatures.fragmentShaderBarycentric == VK_TRUE;
+    }
+    if (const auto* interpolation = std::getenv("APS5_FIXED_FUNCTION_INTERPOLATION"); interpolation && std::strcmp(interpolation, "1") == 0) {
+        state->fragmentShaderBarycentric = false;
+        APS5_LOG_OUT("%s", "Fixed-function fragment interpolation selected; noncanonical I/J programs remain rejected");
     }
     VkPhysicalDeviceFragmentShaderInterlockFeaturesEXT interlockFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_INTERLOCK_FEATURES_EXT};
     if (hasExtension(VK_EXT_FRAGMENT_SHADER_INTERLOCK_EXTENSION_NAME)) {
@@ -936,7 +995,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window) : state(std::make_u
     enabled.tessellationShader = available.tessellationShader;
     state->tessellationShader = enabled.tessellationShader == VK_TRUE;
     if (state->tessellationShader) state->capabilities.push_back(3);
-    APS5_LOG_OUT("Vulkan features tessellationAvailable=%u mesh=%u depthClip=%u depthRangeUnrestricted=%u", static_cast<unsigned>(state->tessellationShader), static_cast<unsigned>(state->meshShader), static_cast<unsigned>(state->depthClipControl), static_cast<unsigned>(state->depthRangeUnrestricted));
+    APS5_LOG_OUT("Vulkan features tessellationAvailable=%u mesh=%u depthClip=%u depthRangeUnrestricted=%u bufferInt64Atomics=%u", static_cast<unsigned>(state->tessellationShader), static_cast<unsigned>(state->meshShader), static_cast<unsigned>(state->depthClipControl), static_cast<unsigned>(state->depthRangeUnrestricted), static_cast<unsigned>(bufferInt64Atomics));
     require(available.samplerAnisotropy && available.textureCompressionBC, "device lacks sampler anisotropy or BC texture compression support required for texture sampling");
     enabled.samplerAnisotropy = VK_TRUE;
     enabled.textureCompressionBC = VK_TRUE;
@@ -1106,6 +1165,13 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window) : state(std::make_u
     }
     bdaFeatures.pNext = &byteFeatures;
     deviceInfo.pNext = &bdaFeatures;
+    // The name lives in vulkan_beta.h behind VK_ENABLE_BETA_EXTENSIONS. MoltenVK
+    // requires the extension whenever the device advertises it.
+    if (hasExtension("VK_KHR_portability_subset")) {
+        deviceExtensions.push_back("VK_KHR_portability_subset");
+        deviceInfo.enabledExtensionCount = static_cast<std::uint32_t>(deviceExtensions.size());
+        deviceInfo.ppEnabledExtensionNames = deviceExtensions.data();
+    }
     check(state->InstanceFunction<PFN_vkCreateDevice>("vkCreateDevice")(selected, &deviceInfo, nullptr, &state->device), "vkCreateDevice");
     state->DeviceFunction<PFN_vkGetDeviceQueue>("vkGetDeviceQueue")(state->device, family, 0, &state->queue);
     APS5_LOG_OUT("Vulkan device ready device=%p queue=%p family=%u", reinterpret_cast<void*>(state->device), reinterpret_cast<void*>(state->queue), family);
@@ -2434,6 +2500,7 @@ ShaderRecompiler::SpirvTarget VulkanDevice::Target() const {
     target.fragmentShaderBarycentricEnabled = state->fragmentShaderBarycentric;
     target.nonConstantImageOffsets = state->maintenance8;
     target.narrowSubgroupClock = state->narrowSubgroupClock;
+    target.vertexSubgroups = (state->subgroup.supportedStages & VK_SHADER_STAGE_VERTEX_BIT) != 0;
     target.srgbDecodeFormats = state->srgbDecodeFormats;
     if (state->meshShader) {
         const auto& mesh = state->meshLimits;

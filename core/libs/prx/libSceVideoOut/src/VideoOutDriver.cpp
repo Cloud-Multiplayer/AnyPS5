@@ -199,14 +199,58 @@ VideoOutDriver& VideoOutDriver::Get() {
     return instance;
 }
 
+#if defined(__APPLE__)
+namespace {
+struct MainPresentStart {
+    VideoOutDriver* driver = nullptr;
+    void (*loop)(VideoOutDriver*, std::stop_token) = nullptr;
+    std::stop_token token;
+    std::promise<void> initialized;
+    std::promise<bool> proceed;
+    std::promise<void> done;
+};
+
+void MainPresentTask(void* data) {
+    const std::unique_ptr<std::shared_ptr<MainPresentStart>> holder(static_cast<std::shared_ptr<MainPresentStart>*>(data));
+    const auto start = *holder;
+    try {
+        SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
+        if (SDL_InitSubSystem(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER) < 0) throw std::runtime_error(std::string("SDL_InitSubSystem(VIDEO | GAMECONTROLLER) failed: ") + SDL_GetError());
+        start->initialized.set_value();
+    } catch (...) {
+        start->initialized.set_exception(std::current_exception());
+        start->done.set_value();
+        return;
+    }
+    if (start->proceed.get_future().get()) start->loop(start->driver, start->token);
+    start->done.set_value();
+}
+}
+#endif
+
 VideoOutDriver::VideoOutDriver() {
+#if defined(__APPLE__)
+    const auto mainStart = std::make_shared<MainPresentStart>();
+    mainStart->driver = this;
+    mainStart->loop = [](VideoOutDriver* driver, std::stop_token token) { driver->presentLoop(token); };
+    mainStart->token = mainPresentStop.get_token();
+    mainPresentDone = mainStart->done.get_future();
+    auto initialized = mainStart->initialized.get_future();
+    Aps5MacRunOnMainThread(&MainPresentTask, new std::shared_ptr<MainPresentStart>(mainStart));
+    initialized.get();
+#else
     SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
     if (SDL_InitSubSystem(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER) < 0) {
         throw std::runtime_error(std::string("SDL_InitSubSystem(VIDEO | GAMECONTROLLER) failed: ") + SDL_GetError());
     }
+#endif
     try {
         AgcDriverWaitIdle_nid_postfix();
+#if defined(__APPLE__)
+        mainStart->proceed.set_value(true);
+#else
         presentThread = std::jthread([this](std::stop_token token) { presentLoop(token); });
+#endif
         vblankThread = std::jthread([this](std::stop_token token) { vblankLoop(token); });
         LibcRegisterShutdown_nid_postfix([] { VideoOutDriver::Get().Shutdown(); });
     } catch (...) {
@@ -220,6 +264,15 @@ VideoOutDriver::VideoOutDriver() {
             flipQueue->changed.notify_all();
             presentThread.join();
         }
+#if defined(__APPLE__)
+        mainPresentStop.request_stop();
+        flipQueue->changed.notify_all();
+        try {
+            mainStart->proceed.set_value(false);
+        } catch (const std::future_error&) {
+        }
+        mainPresentDone.wait();
+#endif
         SDL_QuitSubSystem(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER);
         throw;
     }
@@ -238,11 +291,20 @@ void VideoOutDriver::Shutdown() {
         std::lock_guard queueLock(flipQueue->mutex);
         flipQueue->stopping = true;
     }
+#if defined(__APPLE__)
+    require(pthread_main_np() == 0, "presentation thread cannot stop itself");
+    mainPresentStop.request_stop();
+    vblankThread.request_stop();
+    flipQueue->changed.notify_all();
+    mainPresentDone.wait();
+    vblankThread.join();
+#else
     presentThread.request_stop();
     vblankThread.request_stop();
     flipQueue->changed.notify_all();
     presentThread.join();
     vblankThread.join();
+#endif
     {
         std::lock_guard lock(mutex);
         for (int handle = 1; handle < VIDEO_OUT_NUM_MAX; ++handle) {

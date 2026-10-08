@@ -22,9 +22,22 @@
 #include <unistd.h>
 #endif
 
+#if defined(__APPLE__)
+#include <atomic>
+#include <csignal>
+#include <cstring>
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
+#include <sched.h>
+#include <sys/mman.h>
+#endif
+
+#if (defined(__linux__) && defined(PAGEMAP_SCAN) && defined(UFFD_FEATURE_WP_ASYNC)) || defined(__APPLE__)
+#define APS5_HAVE_WRITE_WATCH 1
+#endif
+
 namespace GuestWriteWatch {
 namespace {
-
 #if defined(__linux__) && defined(PAGEMAP_SCAN) && defined(UFFD_FEATURE_WP_ASYNC)
 constexpr std::uintptr_t PageBytes = 4096;
 
@@ -250,12 +263,14 @@ private:
 };
 
 const bool g_opened = (Watch::Get(), true);
+#elif defined(__APPLE__)
+#include "prx/libc/src/specifics/macos/MacWriteWatch.inl"
 #endif
 
 }
 
 bool GuestWriteWatchAvailable_nid_postfix() {
-#if defined(__linux__) && defined(PAGEMAP_SCAN) && defined(UFFD_FEATURE_WP_ASYNC)
+#if defined(APS5_HAVE_WRITE_WATCH)
     return Watch::Get().Available();
 #else
     return false;
@@ -263,7 +278,7 @@ bool GuestWriteWatchAvailable_nid_postfix() {
 }
 
 void GuestWriteWatchRegister_nid_postfix(const void* pointer, std::size_t bytes) {
-#if defined(__linux__) && defined(PAGEMAP_SCAN) && defined(UFFD_FEATURE_WP_ASYNC)
+#if defined(APS5_HAVE_WRITE_WATCH)
     const auto begin = reinterpret_cast<std::uintptr_t>(pointer);
     Watch::Get().Register(begin, begin + bytes);
 #else
@@ -273,7 +288,7 @@ void GuestWriteWatchRegister_nid_postfix(const void* pointer, std::size_t bytes)
 }
 
 bool GuestWriteWatchUnregister_nid_postfix(const void* pointer, std::size_t bytes) {
-#if defined(__linux__) && defined(PAGEMAP_SCAN) && defined(UFFD_FEATURE_WP_ASYNC)
+#if defined(APS5_HAVE_WRITE_WATCH)
     const auto begin = reinterpret_cast<std::uintptr_t>(pointer);
     return Watch::Get().Unregister(begin, begin + bytes);
 #else
@@ -284,7 +299,7 @@ bool GuestWriteWatchUnregister_nid_postfix(const void* pointer, std::size_t byte
 }
 
 bool GuestWriteWatchCovers_nid_postfix(std::uintptr_t address, std::size_t bytes) {
-#if defined(__linux__) && defined(PAGEMAP_SCAN) && defined(UFFD_FEATURE_WP_ASYNC)
+#if defined(APS5_HAVE_WRITE_WATCH)
     return bytes != 0 && address + bytes > address && Watch::Get().Covers(address, address + bytes);
 #else
     static_cast<void>(address);
@@ -294,7 +309,7 @@ bool GuestWriteWatchCovers_nid_postfix(std::uintptr_t address, std::size_t bytes
 }
 
 bool GuestWriteWatchCollect_nid_postfix(std::uintptr_t address, std::size_t bytes, void (*written)(void* context, std::uintptr_t begin, std::uintptr_t end), void* context) {
-#if defined(__linux__) && defined(PAGEMAP_SCAN) && defined(UFFD_FEATURE_WP_ASYNC)
+#if defined(APS5_HAVE_WRITE_WATCH)
     if (bytes == 0 || address + bytes < address) return false;
     return Watch::Get().Collect(address, address + bytes, written, context);
 #else

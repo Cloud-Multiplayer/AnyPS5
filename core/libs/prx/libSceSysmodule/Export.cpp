@@ -1,3 +1,4 @@
+#include "prx/libc/include/general/ProcPaths.hpp"
 #include <cstdint>
 #include <cstring>
 #include <mutex>
@@ -45,7 +46,7 @@ bool fillModuleInfoForUnwind(std::uint64_t addr, ModuleInfoForUnwind* info) {
     info->name[sizeof(info->name) - 1] = '\0';
     return true;
 #else
-    std::ifstream maps("/proc/self/maps");
+    std::ifstream maps(APS5_PROC_SELF_MAPS);
     if (!maps) {
         throw std::runtime_error("sceSysmoduleGetModuleInfoForUnwind: failed to open /proc/self/maps");
     }
